@@ -30,7 +30,7 @@ export interface Project {
 
 // ─── Assets ─────────────────────────────────────────────────────────────────
 
-export type AssetRole = 'zoom_master' | 'stage_wide_mezzanine'
+export type AssetRole = 'zoom_master' | 'camera_a' | 'camera_b'
 
 export type AssetSourceProvider =
   | 'google_drive'
@@ -50,6 +50,7 @@ export interface Asset {
   id: string
   project_id: string
   role: AssetRole
+  label: string | null
   source_provider: AssetSourceProvider
   original_name: string
   mime_type: string | null

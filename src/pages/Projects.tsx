@@ -1,30 +1,20 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProject } from '@/context/ProjectContext'
+import { supabase } from '@/lib/supabase'
 import type { Project, RecapBrief } from '@/types'
-
-// ─── Mocked project list (replaced by real DB calls in Phase 2) ───────────────
-const MOCK_PROJECTS: Project[] = [
-  {
-    id: 'mock-1',
-    name: 'April 2026 Webinar Recap',
-    status: 'draft',
-    recap_brief: null,
-    target_runtime_seconds: 300,
-    sync_offset_ms: 0,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-]
 
 export default function ProjectsPage() {
   const { setActiveProject } = useProject()
   const navigate = useNavigate()
 
-  const [projects, setProjects] = useState<Project[]>(MOCK_PROJECTS)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  // New-project form state
+  // Form state
   const [name, setName] = useState('')
   const [targetMins, setTargetMins] = useState('5')
   const [desiredOutcome, setDesiredOutcome] = useState('')
@@ -32,28 +22,67 @@ export default function ProjectsPage() {
   const [topicsAvoid, setTopicsAvoid] = useState('')
   const [ctaText, setCtaText] = useState('')
 
-  function handleCreate(e: React.FormEvent) {
+  useEffect(() => {
+    loadProjects()
+  }, [])
+
+  async function loadProjects() {
+    setLoading(true)
+    setError(null)
+    const { data, error: err } = await supabase
+      .from('projects')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (err) setError(err.message)
+    else setProjects(data ?? [])
+    setLoading(false)
+  }
+
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    setSaving(true)
+    setError(null)
+
     const brief: RecapBrief = {
       desired_outcome: desiredOutcome,
       topics_to_emphasize: topicsEmphasis.split(',').map(t => t.trim()).filter(Boolean),
       topics_to_avoid: topicsAvoid.split(',').map(t => t.trim()).filter(Boolean),
       cta_outro_text: ctaText || undefined,
     }
-    const project: Project = {
-      id: `mock-${Date.now()}`,
-      name,
-      status: 'draft',
-      recap_brief: brief,
-      target_runtime_seconds: Number(targetMins) * 60,
-      sync_offset_ms: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+
+    const { data, error: err } = await supabase
+      .from('projects')
+      .insert({
+        name: name.trim(),
+        status: 'draft',
+        recap_brief: brief,
+        target_runtime_seconds: Number(targetMins) * 60,
+        sync_offset_ms: 0,
+      })
+      .select()
+      .single()
+
+    setSaving(false)
+
+    if (err) {
+      setError(`Failed to create project: ${err.message}`)
+      return
     }
-    setProjects(prev => [project, ...prev])
-    setActiveProject(project)
+
+    setProjects(prev => [data, ...prev])
+    setActiveProject(data)
     setShowForm(false)
+    resetForm()
     navigate('/import')
+  }
+
+  function resetForm() {
+    setName('')
+    setTargetMins('5')
+    setDesiredOutcome('')
+    setTopicsEmphasis('')
+    setTopicsAvoid('')
+    setCtaText('')
   }
 
   function handleOpen(project: Project) {
@@ -68,13 +97,15 @@ export default function ProjectsPage() {
         Each project is one webinar recap. Select an existing project or create a new one.
       </div>
 
-      <div className="mock-banner">
-        ⚠ Phase 1 — projects are stored in memory only. Real Supabase persistence ships in Phase 2.
-      </div>
+      {error && (
+        <div style={{ background: '#3b1820', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '10px 16px', marginBottom: 16, color: 'var(--danger)', fontSize: 13 }}>
+          {error}
+        </div>
+      )}
 
       <div className="row" style={{ marginBottom: 20 }}>
         <div className="spacer" />
-        <button onClick={() => setShowForm(v => !v)}>
+        <button onClick={() => { setShowForm(v => !v); setError(null) }}>
           {showForm ? 'Cancel' : '+ New Project'}
         </button>
       </div>
@@ -136,13 +167,19 @@ export default function ProjectsPage() {
             </div>
             <div className="row">
               <div className="spacer" />
-              <button type="submit">Create &amp; Continue →</button>
+              <button type="submit" disabled={saving}>
+                {saving ? 'Creating…' : 'Create & Continue →'}
+              </button>
             </div>
           </form>
         </div>
       )}
 
-      {projects.length === 0 && !showForm && (
+      {loading && (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading projects…</div>
+      )}
+
+      {!loading && projects.length === 0 && !showForm && (
         <div className="empty-state">
           <h3>No projects yet</h3>
           <p>Create your first project to get started.</p>
@@ -151,13 +188,20 @@ export default function ProjectsPage() {
       )}
 
       {projects.map(project => (
-        <div className="card" key={project.id} style={{ cursor: 'pointer' }} onClick={() => handleOpen(project)}>
+        <div
+          className="card"
+          key={project.id}
+          style={{ cursor: 'pointer' }}
+          onClick={() => handleOpen(project)}
+        >
           <div className="row">
             <div>
               <div className="card-title" style={{ marginBottom: 4 }}>{project.name}</div>
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                 Created {new Date(project.created_at).toLocaleDateString()} ·{' '}
-                {project.target_runtime_seconds ? `${project.target_runtime_seconds / 60} min target` : 'No target runtime'}
+                {project.target_runtime_seconds
+                  ? `${project.target_runtime_seconds / 60} min target`
+                  : 'No target runtime'}
               </div>
             </div>
             <div className="spacer" />
